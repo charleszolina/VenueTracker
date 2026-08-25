@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Church and Venue Tracker</title>
+  
+  <!-- Leaflet CSS -->
+  <link 
+    rel="stylesheet" 
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+  />
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body, html { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #map { height: 100vh; width: 100vw; z-index: 1; }
+
+    .controls {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .btn {
+      background-color: #ffffff;
+      color: #333333;
+      border: 2px solid #e0e0e0;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover { background-color: #f8f9fa; transform: translateY(-2px); }
+    .btn:active { transform: translateY(0); }
+
+    .btn.active {
+      background-color: #4A90E2;
+      color: #ffffff;
+      border-color: #4A90E2;
+    }
+
+    .status-badge {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="controls">
+    <button id="btnChurch" class="btn">Route to Church</button>
+    <button id="btnVenue" class="btn">Route to Reception Venue</button>
+  </div>
+
+  <div id="status" class="status-badge">Locating user...</div>
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    const DESTINATIONS = {
+      church: {
+        lat: 14.578127100307324, 
+        lng: 121.11579712637148, 
+        name: "Diocesan Shrine"
+      },
+      venue: {
+        lat: 14.586464714471187,
+        lng: 121.07877224052307, 
+        name: "Shakeys Tiendesitas"
+      }
+    };
+
+    // Tracking interval set to 1 minute
+    const TRACKING_INTERVAL_MS = 60000; 
+    const map = L.map('map').setView([DESTINATIONS.church.lat, DESTINATIONS.church.lng], 13);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19,
+      subdomains: 'abcd',
+      attribution: '© OpenStreetMap contributors © CARTO'
+    }).addTo(map);
+
+    let userLocation = null;
+    let userMarker = null;
+    let currentRoutePolyline = null;
+
+    let targetDestination = DESTINATIONS.church; 
+
+    L.marker([DESTINATIONS.church.lat, DESTINATIONS.church.lng])
+      .addTo(map)
+      .bindPopup(`<b>${DESTINATIONS.church.name}</b>`);
+
+    L.marker([DESTINATIONS.venue.lat, DESTINATIONS.venue.lng])
+      .addTo(map)
+      .bindPopup(`<b>${DESTINATIONS.venue.name}</b>`);
+
+    function updatePosition() {
+      if (!navigator.geolocation) {
+        document.getElementById('status').innerText = "Geolocation not supported";
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          userLocation = [lat, lng];
+
+          const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          document.getElementById('status').innerText = `Last updated: ${timeString}`;
+
+          // Update or create user marker
+          if (userMarker) {
+            userMarker.setLatLng(userLocation);
+          } else {
+            userMarker = L.circleMarker(userLocation, {
+              color: '#1E88E5',
+              fillColor: '#1E88E5',
+              fillOpacity: 0.8,
+              radius: 8
+            }).addTo(map).bindPopup("Your Location");
+          }
+
+          if (targetDestination) {
+            drawRoute(userLocation, targetDestination);
+          }
+        },
+        (error) => {
+          document.getElementById('status').innerText = "Location access denied/unavailable";
+          console.error("Error getting position:", error);
+        },
+        { enableHighAccuracy: true }
+      );
+    }
+
+    updatePosition();
+    setInterval(updatePosition, TRACKING_INTERVAL_MS);
+
+    async function drawRoute(startCoords, destCoords) {
+    // Fetches road coordinates between user and destination
+    const url = `https://router.project-osrm.org/route/v1/driving/${startCoords[1]},${startCoords[0]};${destCoords.lng},${destCoords.lat}?overview=full&geometries=geojson`;
+
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.routes && data.routes.length > 0) {
+        const coordinates = data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+
+        if (currentRoutePolyline) {
+            map.removeLayer(currentRoutePolyline);
+        }
+        currentRoutePolyline = L.polyline(coordinates, { 
+            color: '#4A90E2', 
+            weight: 5, 
+            opacity: 0.8 
+        }).addTo(map);
+
+        const bounds = L.latLngBounds([startCoords, [destCoords.lat, destCoords.lng]]);
+        map.fitBounds(bounds, { padding: [50, 50] });
+        }
+        } catch (err) {
+            console.error("Routing error:", err);
+        }
+    }
+
+    const btnChurch = document.getElementById('btnChurch');
+    const btnVenue = document.getElementById('btnVenue');
+
+    function setActiveButton(activeBtn) {
+      btnChurch.classList.remove('active');
+      btnVenue.classList.remove('active');
+      activeBtn.classList.add('active');
+    }
+
+    setActiveButton(btnChurch);
+
+    btnChurch.addEventListener('click', () => {
+      targetDestination = DESTINATIONS.church;
+      setActiveButton(btnChurch);
+      if (userLocation) {
+        drawRoute(userLocation, targetDestination);
+      } else {
+        map.setView([DESTINATIONS.church.lat, DESTINATIONS.church.lng], 15);
+      }
+    });
+
+    btnVenue.addEventListener('click', () => {
+      targetDestination = DESTINATIONS.venue;
+      setActiveButton(btnVenue);
+      if (userLocation) {
+        drawRoute(userLocation, targetDestination);
+      } else {
+        map.setView([DESTINATIONS.venue.lat, DESTINATIONS.venue.lng], 15);
+      }
+    });
+  </script>
+</body>
+</html>
