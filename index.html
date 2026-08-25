@@ -75,142 +75,172 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
+    const ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImJhMDc2OGQzZGRhMDQyZGY4ZDVjYjkyZDNmOTI2MjZkIiwiaCI6Im11cm11cjY0In0=";
+
     const DESTINATIONS = {
-      church: {
+    church: {
         lat: 14.578127100307324, 
         lng: 121.11579712637148, 
         name: "Diocesan Shrine"
-      },
-      venue: {
+    },
+    venue: {
         lat: 14.586464714471187,
         lng: 121.07877224052307, 
-        name: "Shakeys Tiendesitas"
-      }
+        name: "Shakey's Tiendesitas"
+    }
     };
 
-    // Tracking interval set to 1 minute
     const TRACKING_INTERVAL_MS = 60000; 
-    const map = L.map('map').setView([DESTINATIONS.church.lat, DESTINATIONS.church.lng], 13);
+
+    // Initialize map centered immediately on Church
+    const map = L.map('map').setView([DESTINATIONS.church.lat, DESTINATIONS.church.lng], 14);
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution: '© OpenStreetMap contributors © CARTO'
+    maxZoom: 19,
+    subdomains: 'abcd',
+    attribution: '© OpenStreetMap contributors © CARTO'
     }).addTo(map);
 
     let userLocation = null;
     let userMarker = null;
     let currentRoutePolyline = null;
-
     let targetDestination = DESTINATIONS.church; 
 
+    // Static Markers
     L.marker([DESTINATIONS.church.lat, DESTINATIONS.church.lng])
-      .addTo(map)
-      .bindPopup(`<b>${DESTINATIONS.church.name}</b>`);
+    .addTo(map)
+    .bindPopup(`<b>${DESTINATIONS.church.name}</b>`);
 
     L.marker([DESTINATIONS.venue.lat, DESTINATIONS.venue.lng])
-      .addTo(map)
-      .bindPopup(`<b>${DESTINATIONS.venue.name}</b>`);
+    .addTo(map)
+    .bindPopup(`<b>${DESTINATIONS.venue.name}</b>`);
 
-    function updatePosition() {
-      if (!navigator.geolocation) {
-        document.getElementById('status').innerText = "Geolocation not supported";
+    // Cache to store fetched routes so switching buttons is instant
+    const routeCache = {};
+
+    async function drawRoute(startCoords, destCoords) {
+    const startLngLat = `${startCoords[1]},${startCoords[0]}`;
+    const destLngLat = `${destCoords.lng},${destCoords.lat}`;
+    const cacheKey = `${startLngLat}->${destLngLat}`;
+
+    // Instant response if route was previously fetched
+    if (routeCache[cacheKey]) {
+        renderPolyline(routeCache[cacheKey]);
         return;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          userLocation = [lat, lng];
-
-          const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          document.getElementById('status').innerText = `Last updated: ${timeString}`;
-
-          // Update or create user marker
-          if (userMarker) {
-            userMarker.setLatLng(userLocation);
-          } else {
-            userMarker = L.circleMarker(userLocation, {
-              color: '#1E88E5',
-              fillColor: '#1E88E5',
-              fillOpacity: 0.8,
-              radius: 8
-            }).addTo(map).bindPopup("Your Location");
-          }
-
-          if (targetDestination) {
-            drawRoute(userLocation, targetDestination);
-          }
-        },
-        (error) => {
-          document.getElementById('status').innerText = "Location access denied/unavailable";
-          console.error("Error getting position:", error);
-        },
-        { enableHighAccuracy: true }
-      );
     }
 
+    // Draw immediate fallback line while waiting for network API
+    renderPolyline([startCoords, [destCoords.lat, destCoords.lng]], true);
+
+    const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${ORS_API_KEY}&start=${startLngLat}&end=${destLngLat}`;
+
+    try {
+        const response = await fetch(url, { headers: { 'Accept': 'application/json, application/geo+json' } });
+        const data = await response.json();
+
+        if (data.features && data.features.length > 0) {
+        const routeCoords = data.features[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        
+        // Save to cache
+        routeCache[cacheKey] = routeCoords;
+        
+        // Only draw if target destination hasn't changed during fetch
+        if (targetDestination === destCoords) {
+            renderPolyline(routeCoords);
+        }
+        }
+    } catch (err) {
+        console.error("Routing error:", err);
+    }
+    }
+
+    function renderPolyline(coordinates, isTemporary = false) {
+    if (currentRoutePolyline) {
+        map.removeLayer(currentRoutePolyline);
+    }
+
+    currentRoutePolyline = L.polyline(coordinates, { 
+        color: '#4A90E2', 
+        weight: 5, 
+        opacity: isTemporary ? 0.4 : 0.9,
+        dashArray: isTemporary ? '8, 8' : null,
+        lineJoin: 'round'
+    }).addTo(map);
+
+    map.fitBounds(currentRoutePolyline.getBounds(), { padding: [50, 50] });
+    }
+
+    function updatePosition() {
+    if (!navigator.geolocation) {
+        document.getElementById('status').innerText = "Geolocation not supported";
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        userLocation = [lat, lng];
+
+        const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('status').innerText = `Last updated: ${timeString}`;
+
+        if (userMarker) {
+            userMarker.setLatLng(userLocation);
+        } else {
+            userMarker = L.circleMarker(userLocation, {
+            color: '#1E88E5',
+            fillColor: '#1E88E5',
+            fillOpacity: 0.8,
+            radius: 8
+            }).addTo(map).bindPopup("Your Location");
+        }
+
+        drawRoute(userLocation, targetDestination);
+        },
+        (error) => {
+        document.getElementById('status').innerText = "Location access denied/unavailable";
+        },
+        { enableHighAccuracy: true, timeout: 5000 }
+    );
+    }
+
+    // Start location check immediately
     updatePosition();
     setInterval(updatePosition, TRACKING_INTERVAL_MS);
 
-    async function drawRoute(startCoords, destCoords) {
-    // Fetches road coordinates between user and destination
-    const url = `https://router.project-osrm.org/route/v1/driving/${startCoords[1]},${startCoords[0]};${destCoords.lng},${destCoords.lat}?overview=full&geometries=geojson`;
-
-    try {
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (data.routes && data.routes.length > 0) {
-        const coordinates = data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
-
-        if (currentRoutePolyline) {
-            map.removeLayer(currentRoutePolyline);
-        }
-        currentRoutePolyline = L.polyline(coordinates, { 
-            color: '#4A90E2', 
-            weight: 5, 
-            opacity: 0.8 
-        }).addTo(map);
-
-        const bounds = L.latLngBounds([startCoords, [destCoords.lat, destCoords.lng]]);
-        map.fitBounds(bounds, { padding: [50, 50] });
-        }
-        } catch (err) {
-            console.error("Routing error:", err);
-        }
-    }
-
+    // Button Handlers
     const btnChurch = document.getElementById('btnChurch');
     const btnVenue = document.getElementById('btnVenue');
 
     function setActiveButton(activeBtn) {
-      btnChurch.classList.remove('active');
-      btnVenue.classList.remove('active');
-      activeBtn.classList.add('active');
+    btnChurch.classList.remove('active');
+    btnVenue.classList.remove('active');
+    activeBtn.classList.add('active');
     }
 
     setActiveButton(btnChurch);
 
     btnChurch.addEventListener('click', () => {
-      targetDestination = DESTINATIONS.church;
-      setActiveButton(btnChurch);
-      if (userLocation) {
+    targetDestination = DESTINATIONS.church;
+    setActiveButton(btnChurch);
+    
+    if (userLocation) {
         drawRoute(userLocation, targetDestination);
-      } else {
-        map.setView([DESTINATIONS.church.lat, DESTINATIONS.church.lng], 15);
-      }
+    } else {
+        map.flyTo([DESTINATIONS.church.lat, DESTINATIONS.church.lng], 15, { animate: true });
+    }
     });
 
     btnVenue.addEventListener('click', () => {
-      targetDestination = DESTINATIONS.venue;
-      setActiveButton(btnVenue);
-      if (userLocation) {
+    targetDestination = DESTINATIONS.venue;
+    setActiveButton(btnVenue);
+    
+    if (userLocation) {
         drawRoute(userLocation, targetDestination);
-      } else {
-        map.setView([DESTINATIONS.venue.lat, DESTINATIONS.venue.lng], 15);
-      }
+    } else {
+        map.flyTo([DESTINATIONS.venue.lat, DESTINATIONS.venue.lng], 15, { animate: true });
+    }
     });
   </script>
 </body>
