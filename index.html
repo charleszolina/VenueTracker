@@ -48,11 +48,42 @@
       border-color: #4A90E2;
     }
 
-    .status-badge {
+    /* Left Bottom Overlay Container */
+    .bottom-left-panel {
       position: absolute;
       bottom: 20px;
       left: 20px;
       z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .btn-refresh {
+      background-color: #ffffff;
+      color: #333333;
+      border: 1px solid #cccccc;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 20px;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-refresh:disabled {
+      background-color: #e0e0e0;
+      color: #888888;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .status-badge {
       background: rgba(255, 255, 255, 0.9);
       padding: 8px 14px;
       border-radius: 20px;
@@ -68,7 +99,11 @@
     <button id="btnVenue" class="btn">Route to Reception Venue</button>
   </div>
 
-  <div id="status" class="status-badge">Locating user...</div>
+  <div class="bottom-left-panel">
+    <button id="btnRefresh" class="btn-refresh">↻ Refresh Location</button>
+    <div id="status" class="status-badge">Locating user...</div>
+  </div>
+
   <div id="map"></div>
 
   <!-- Leaflet JS -->
@@ -90,6 +125,10 @@
       }
     };
 
+    // Auto-update location every 5 minutes (300,000 ms)
+    const AUTO_UPDATE_INTERVAL_MS = 300000; 
+    const COOLDOWN_SECONDS = 60;
+
     // Initialize map centered immediately on Church
     const map = L.map('map').setView([DESTINATIONS.church.lat, DESTINATIONS.church.lng], 14);
 
@@ -103,6 +142,7 @@
     let userMarker = null;
     let currentRoutePolyline = null;
     let targetDestination = DESTINATIONS.church; 
+    let cooldownTimer = null;
 
     // Static Markers
     L.marker([DESTINATIONS.church.lat, DESTINATIONS.church.lng])
@@ -168,23 +208,24 @@
       map.fitBounds(currentRoutePolyline.getBounds(), { padding: [50, 50] });
     }
 
-    // Real-time continuous tracking with watchPosition
-    function startLiveTracking() {
+    // Single-shot position update to conserve API calls
+    function fetchUserLocation(isManualTrigger = false) {
       if (!navigator.geolocation) {
         document.getElementById('status').innerText = "Geolocation not supported";
         return;
       }
 
       const statusEl = document.getElementById('status');
+      if (isManualTrigger) statusEl.innerText = "Refreshing location...";
 
-      navigator.geolocation.watchPosition(
+      navigator.geolocation.getCurrentPosition(
         (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
           userLocation = [lat, lng];
 
           const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          statusEl.innerText = `Live | Updated: ${timeString}`;
+          statusEl.innerText = `Updated: ${timeString}`;
 
           if (userMarker) {
             userMarker.setLatLng(userLocation);
@@ -217,14 +258,41 @@
         },
         { 
           enableHighAccuracy: true, 
-          maximumAge: 5000, // Instantly uses cached location while hardware locks on
+          maximumAge: 5000, 
           timeout: 10000 
         }
       );
     }
 
-    // Initialize real-time location stream on load
-    startLiveTracking();
+    // Handles the 60-second cooldown for the manual refresh button
+    function startRefreshCooldown() {
+      const btnRefresh = document.getElementById('btnRefresh');
+      btnRefresh.disabled = true;
+
+      let remaining = COOLDOWN_SECONDS;
+      btnRefresh.innerText = `Wait ${remaining}s...`;
+
+      cooldownTimer = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+          clearInterval(cooldownTimer);
+          btnRefresh.disabled = false;
+          btnRefresh.innerText = "↻ Refresh Location";
+        } else {
+          btnRefresh.innerText = `Wait ${remaining}s...`;
+        }
+      }, 1000);
+    }
+
+    // Event listener for manual refresh
+    document.getElementById('btnRefresh').addEventListener('click', () => {
+      fetchUserLocation(true);
+      startRefreshCooldown();
+    });
+
+    // Initial check on page load & 5-minute background auto-update
+    fetchUserLocation();
+    setInterval(() => fetchUserLocation(), AUTO_UPDATE_INTERVAL_MS);
 
     // Button Handlers
     const btnChurch = document.getElementById('btnChurch');
