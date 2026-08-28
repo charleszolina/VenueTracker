@@ -48,39 +48,44 @@
       border-color: #4A90E2;
     }
 
-    /* Left Bottom Overlay Container */
+    /* Left Top Panel: Route Information Card */
+    .route-info-card {
+      position: absolute;
+      top: 80px; /* Pushed down to clear Leaflet zoom controls */
+      left: 20px;
+      z-index: 1000;
+      background: #ffffff;
+      padding: 12px 16px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 220px;
+    }
+
+    .route-info-title { font-size: 14px; font-weight: 700; color: #333; }
+    .route-info-details { font-size: 13px; color: #555; line-height: 1.4; }
+    .btn-gmaps {
+      margin-top: 4px;
+      padding: 6px 10px;
+      background-color: #1a73e8;
+      color: white;
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      text-align: center;
+      transition: background-color 0.2s;
+    }
+    .btn-gmaps:hover { background-color: #1557b0; }
+
+    /* Left Bottom Panel: Status Badge */
     .bottom-left-panel {
       position: absolute;
       bottom: 20px;
       left: 20px;
       z-index: 1000;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      align-items: flex-start;
-    }
-
-    .btn-refresh {
-      background-color: #ffffff;
-      color: #333333;
-      border: 1px solid #cccccc;
-      padding: 8px 12px;
-      font-size: 12px;
-      font-weight: 600;
-      border-radius: 20px;
-      cursor: pointer;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      transition: all 0.2s ease;
-    }
-
-    .btn-refresh:disabled {
-      background-color: #e0e0e0;
-      color: #888888;
-      cursor: not-allowed;
-      box-shadow: none;
     }
 
     .status-badge {
@@ -90,18 +95,64 @@
       font-size: 12px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.15);
     }
+
+    /* Right Bottom Panel: Manual Refresh Button */
+    .bottom-right-panel {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      z-index: 1000;
+    }
+
+    .btn-refresh {
+      background-color: #ffffff;
+      color: #333333;
+      border: 1px solid #cccccc;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 20px;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-refresh:hover { background-color: #f8f9fa; }
+
+    .btn-refresh:disabled {
+      background-color: #e0e0e0;
+      color: #888888;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
   </style>
 </head>
 <body>
 
+  <!-- Top Right Destination Selectors -->
   <div class="controls">
     <button id="btnChurch" class="btn">Route to Church</button>
     <button id="btnVenue" class="btn">Route to Reception Venue</button>
   </div>
 
+  <!-- Top Left Route Metrics Panel -->
+  <div id="routeInfo" class="route-info-card">
+    <div id="infoTitle" class="route-info-title">To Church</div>
+    <div id="infoDetails" class="route-info-details">Calculating...</div>
+    <a id="btnGmaps" href="#" target="_blank" class="btn-gmaps">Open in Google Maps</a>
+  </div>
+
+  <!-- Bottom Left Status -->
   <div class="bottom-left-panel">
-    <button id="btnRefresh" class="btn-refresh">↻ Refresh Location</button>
     <div id="status" class="status-badge">Locating user...</div>
+  </div>
+
+  <!-- Bottom Right Refresh Button -->
+  <div class="bottom-right-panel">
+    <button id="btnRefresh" class="btn-refresh">↻ Refresh Location</button>
   </div>
 
   <div id="map"></div>
@@ -125,17 +176,16 @@
       }
     };
 
-    // Auto-update location every 5 minutes (300,000 ms)
-    const AUTO_UPDATE_INTERVAL_MS = 300000; 
+    const AUTO_UPDATE_INTERVAL_MS = 300000; // 5 Minutes
     const COOLDOWN_SECONDS = 60;
 
-    // Initialize map centered immediately on Church
+    // Initialize map centered on Church
     const map = L.map('map').setView([DESTINATIONS.church.lat, DESTINATIONS.church.lng], 14);
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    // Standard OpenStreetMap Tile Layer (No API key required)
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      subdomains: 'abcd',
-      attribution: '© OpenStreetMap contributors © CARTO'
+      attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
     let userLocation = null;
@@ -153,7 +203,6 @@
       .addTo(map)
       .bindPopup(`<b>${DESTINATIONS.venue.name}</b>`);
 
-    // Cache to store fetched routes so switching buttons is instant
     const routeCache = {};
 
     async function drawRoute(startCoords, destCoords) {
@@ -161,13 +210,32 @@
       const destLngLat = `${destCoords.lng},${destCoords.lat}`;
       const cacheKey = `${startLngLat}->${destLngLat}`;
 
-      // Instant response if route was previously fetched
+      const updateInfoPanel = (durationSec, distanceMeters) => {
+        const infoCard = document.getElementById('routeInfo');
+        const infoTitle = document.getElementById('infoTitle');
+        const infoDetails = document.getElementById('infoDetails');
+        const btnGmaps = document.getElementById('btnGmaps');
+
+        const minutes = Math.round(durationSec / 60);
+        const km = (distanceMeters / 1000).toFixed(1);
+
+        const eta = new Date(Date.now() + durationSec * 1000);
+        const etaString = eta.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        infoTitle.innerText = `To ${targetDestination.name}`;
+        infoDetails.innerHTML = `<b>${minutes} mins</b> (${km} km)<br>ETA: ${etaString}`;
+        
+        btnGmaps.href = `https://www.google.com/maps/dir/?api=1&origin=${startCoords[0]},${startCoords[1]}&destination=${destCoords.lat},${destCoords.lng}&travelmode=driving`;
+        
+        infoCard.style.display = 'flex';
+      };
+
       if (routeCache[cacheKey]) {
-        renderPolyline(routeCache[cacheKey]);
+        renderPolyline(routeCache[cacheKey].coords);
+        updateInfoPanel(routeCache[cacheKey].duration, routeCache[cacheKey].distance);
         return;
       }
 
-      // Draw immediate fallback line while waiting for network API
       renderPolyline([startCoords, [destCoords.lat, destCoords.lng]], true);
 
       const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${ORS_API_KEY}&start=${startLngLat}&end=${destLngLat}`;
@@ -177,14 +245,16 @@
         const data = await response.json();
 
         if (data.features && data.features.length > 0) {
-          const routeCoords = data.features[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+          const feature = data.features[0];
+          const routeCoords = feature.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+          const duration = feature.properties.summary.duration;
+          const distance = feature.properties.summary.distance;
+
+          routeCache[cacheKey] = { coords: routeCoords, duration, distance };
           
-          // Save to cache
-          routeCache[cacheKey] = routeCoords;
-          
-          // Only draw if target destination hasn't changed during fetch
           if (targetDestination === destCoords) {
             renderPolyline(routeCoords);
+            updateInfoPanel(duration, distance);
           }
         }
       } catch (err) {
@@ -208,7 +278,6 @@
       map.fitBounds(currentRoutePolyline.getBounds(), { padding: [50, 50] });
     }
 
-    // Single-shot position update to conserve API calls
     function fetchUserLocation(isManualTrigger = false) {
       if (!navigator.geolocation) {
         document.getElementById('status').innerText = "Geolocation not supported";
@@ -264,7 +333,6 @@
       );
     }
 
-    // Handles the 60-second cooldown for the manual refresh button
     function startRefreshCooldown() {
       const btnRefresh = document.getElementById('btnRefresh');
       btnRefresh.disabled = true;
@@ -284,17 +352,14 @@
       }, 1000);
     }
 
-    // Event listener for manual refresh
     document.getElementById('btnRefresh').addEventListener('click', () => {
       fetchUserLocation(true);
       startRefreshCooldown();
     });
 
-    // Initial check on page load & 5-minute background auto-update
     fetchUserLocation();
     setInterval(() => fetchUserLocation(), AUTO_UPDATE_INTERVAL_MS);
 
-    // Button Handlers
     const btnChurch = document.getElementById('btnChurch');
     const btnVenue = document.getElementById('btnVenue');
 
